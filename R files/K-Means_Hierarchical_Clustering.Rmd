@@ -1,0 +1,164 @@
+---
+title: "Üniversite Öğrencilerine Yönelik Algılanan Stres Ölçeği"
+author: "Kadir Güney"
+output: html_document
+---
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(readxl)
+library(tidyverse)
+library(caret)
+library(e1071)
+library(ggplot2)
+library(groupdata2)
+library(cluster)
+```
+
+
+# Veri Setinin Tanıtılması
+
+```{r}
+data2 <- read_excel("C:/Users/Kadir/Desktop/DATA3.xlsx")
+```
+
+```{r}
+data <- data2 %>%
+  select(psychodiag,sex,age,department,parentstatus,wstudytime,selfincome,
+         dailytime,childhoodlife,fallasleep,smoke,alcohol,psychohistory) %>%
+  mutate_all(factor)
+
+data
+
+```
+
+# Dummy Variables
+
+Makine öğrenmesi,regresyon ve sınıflandırma modellerinin  temelinde matematik olduğu için bizim kategorik verileri sayısal olarak ifade etmemiz gerekmektedir.Bu bölümde verimzi dummy değişken dönüşümü ile oluşturacağımız modeller için anlamlı hale getireceğiz.
+
+İki tür kategorik veri bulunmaktadır. Bunlar ordinal ve nominal’dir.Nominal değişken içinde yer alan değerlerin birbirinden üstün olma gibi bir durumu söz konusu değildir. Dolayısı ile aralarında bir sıralama olamaz. Ordinal veri tipinde ise bir üstünlükten bahsedilebilir. Bu tarz değişkenlerde sıralanabilirlik söz konusudur. 
+
+Oluşturulacak modellerin çalışabilmesi için kategorik verilerin sayısal anlamda dönüştürülmesi gerekmektedir.
+
+
+## One-Hot Encoding
+
+```{r}
+data_dummy <- data %>% select(-psychodiag)
+
+dmy <- dummyVars(" ~ .", data = data_dummy, fullRank = T)
+dat_transformed <- data.frame(predict(dmy, newdata = data_dummy))
+
+dat <- data %>% select(psychodiag)
+
+veri <- data.frame(dat,dat_transformed)
+
+```
+
+
+Makine öğrenmesi modeli kurulurken 3 farklı grup için 3 dummy (kukla) değişken oluşturulur ancak bu kolonlardan bir tanesi silinir (K - 1). Bu işlemin yapılmasındaki amaç Multicollinearity yani çoklu bağlanım sorununu ortadan kaldırmaktır.Bu işlemi **fullRank=T** ile gerçekleştiriyoruz.
+
+```{r}
+veri # data with dumny variables
+```
+
+Psikolojik Rahatsızlık Tanısı değişkenini kümeleme yapacağımız veriden çıkartarak açıklayıcı değişkenleri kümeleyelim benzerliklerine ve özelliklerine göre inceleyelim. Hedef değişkenimizin sınıfları bilindiği gibi "Evet" ve "Hayır" olmak üzere 2 kümeden oluşmaktaydı açıklayıcı değişkenlerin kaç kümede kümelendiğini inceleyelim.
+
+```{r}
+veri2 <- veri %>% select(-psychodiag)
+```
+
+
+# K-Means Clustering
+
+K-ortalamalı kümeleme gerçekleştirmek için, önce istenen küme sayısı K belirtilmelidir. Ardından K-ortalamaları algoritması her gözlemi K kümelerinden tam olarak birine atayacaktır. 
+
+Veri setimizde K-Ortalama algoritmasını başlangıçta K = 4 küme ile çalıştırabiliriz.
+
+```{r}
+set.seed(123)
+
+veri_cluster <- kmeans(veri2, 4)
+veri_cluster
+```
+
+
+```{r}
+fviz_cluster(veri_cluster, data = veri2,
+             geom = "point",
+             ellipse.type = "convex", 
+             ggtheme = theme_bw(),
+             main = "K=4 Cluster",
+             )
+```
+
+K=4 için Kümeleme grafiğini çizdirelim
+
+## Optimal Küme Sayısı
+
+
+```{r}
+# K Sayıda Küme İle Oluşturulan Her K-Means Algoritması İçin "Kümeler İçindeki Değişkenliğin/Homejenliğin Ölçüsünü" Veren Bir Fonksiyon Yazıldı
+
+kmean_withinss <- function(k) {
+  cluster <- kmeans(veri2, k)
+  return (cluster$tot.withinss)
+}
+
+# Maksimum Küme Sayısı Belirtildi
+max_k <- 10
+
+# En az 2 , En Fazla 20 Küme olacak Şekilde Fonksiyon Bu Aralıkta Çalıştırıldı
+set.seed(123)
+wss <- sapply(2:max_k, kmean_withinss) 
+
+# Küme Saysına Karşı Grup İçi Kareler Toplamlarının Toplamı Değerlerinin Grafiğini Çizdirelim.
+
+elbow <- data.frame(K = 2:max_k, Total.Withinss =  wss)
+
+ggplot(elbow, aes(K,Total.Withinss)) +
+  geom_line(linetype="dashed", color="red",size = 1)+
+  geom_point(color="blue",size = 3) + 
+  labs(title = "",x = "K", y = "Total Within Sum of Square") +
+  scale_x_continuous(breaks = seq(1, 20, by = 1))
+
+
+```
+Grafik incelendiğinde küme sayısındaki daki artışın etkisinin azalmaya başladığı nokta 
+K = 6 noktası olarak görülmektedir.Optimal Küme Sayısı K = 6 olarak alınır.
+
+
+```{r}
+set.seed(123)
+
+veri_cluster2 <- kmeans(veri2,6)
+veri_cluster2
+```
+
+
+```{r echo=FALSE}
+fviz_cluster(veri_cluster2, data = veri2,
+             geom = "point",
+             ellipse.type = "convex", 
+             ggtheme = theme_bw(),
+             main = "K=6 Cluster ",
+             )
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

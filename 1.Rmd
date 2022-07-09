@@ -1,0 +1,14 @@
+---
+```{r}
+library(naivebayes)
+library(dplyr)
+library(ggplot2)
+library(psych)
+```
+
+
+```{r}
+
+```
+
+

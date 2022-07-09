@@ -1,0 +1,104 @@
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(caret)
+library(caretEnsemble)
+library(psych)
+library(Amelia)
+library(mice)
+library(GGally)
+library(rpart)
+library(randomForest)
+```
+
+```{r}
+data2 <- read_excel("C:/Users/Kadir/Desktop/DATA3.xlsx")
+```
+
+```{r}
+data <- data2 %>%
+  select(psychodiag,sex,age,department,parentstatus,wstudytime,selfincome,
+         dailytime,childhoodlife,fallasleep,smoke,alcohol,psychohistory) %>%
+  mutate_all(factor)
+
+data
+```
+
+
+## One-Hot Encoding
+```{r}
+data_dummy <- data %>% select(-psychodiag)
+
+dmy <- dummyVars(" ~ .", data = data_dummy, fullRank = T)
+dat_transformed <- data.frame(predict(dmy, newdata = data_dummy))
+
+dat <- data %>% select(psychodiag)
+
+veri <- data.frame(dat,dat_transformed)
+```
+
+```{r}
+veri # data with dumny variables
+```
+
+```{r}
+veri$psychodiag <- ifelse(veri$psychodiag == "Evet","0","1")
+veri$psychodiag <- factor(veri$psychodiag)
+```
+
+
+```{r}
+veri$psychodiag
+```
+
+```{r}
+# Veri Seti Train - Test Ayrımı
+set.seed(1)
+train_indeks <- createDataPartition(veri$psychodiag,
+                                    p = .8,list = FALSE, times = 1)
+train <- veri[train_indeks,]
+test  <- veri[-train_indeks,]
+
+train_x <- train %>% dplyr::select(-psychodiag)
+train_y <- train$psychodiag
+
+test_x <- test %>% dplyr::select(-psychodiag)
+test_y <- test$psychodiag
+
+
+training <- data.frame(train_x, class = train_y) # Tek bir veri seti
+```
+
+
+### Dengesiz Dağılmış Veri ile Mücadele
+
+```{r echo=FALSE}
+ggplot(training,aes(x = class,fill = class)) +
+  geom_bar() +
+  labs(title = "Üniversite Öğrencilerine Yönelik Algılanan Stres Ölçeği",x = "Psikolojik Rahatsızlık Tanısı")
+```
+
+
+## Model
+
+
+
+```{r warning=FALSE}
+
+## Model
+
+set.seed(120)  # Setting Seed
+classifier_cl <- naiveBayes(Species ~ ., data = train_cl)
+classifier_cl
+ 
+# Predicting on test data'
+y_pred <- predict(classifier_cl, newdata = test_cl)
+ 
+# Confusion Matrix
+cm <- table(test_cl$Species, y_pred)
+cm
+ 
+# Model Evaluation
+confusionMatrix(cm)
+```
+```

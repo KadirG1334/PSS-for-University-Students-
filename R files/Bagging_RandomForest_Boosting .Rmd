@@ -1,0 +1,503 @@
+---
+title: "Üniversite Öğrencilerine Yönelik Algılanan Stres Ölçeği"
+author: "Kadir Güney"
+output: html_document
+---
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(readxl)
+library(tidyverse)
+library(caret)
+library(e1071)
+library(ggplot2)
+library(groupdata2)
+library(InformationValue)
+library(tree)
+library(randomForest)
+library(gbm)
+```
+
+
+# Veri Setinin Tanıtılması
+
+```{r}
+data2 <- read_excel("C:/Users/Kadir/Desktop/DATA3.xlsx")
+```
+
+```{r}
+data <- data2 %>%
+  select(psychodiag,sex,age,department,parentstatus,wstudytime,selfincome,
+         dailytime,childhoodlife,fallasleep,smoke,alcohol,psychohistory,StressStatus
+) %>%
+  mutate_all(factor)
+
+data
+
+```
+
+# Dummy Variables
+
+Makine öğrenmesi,regresyon ve sınıflandırma modellerinin  temelinde matematik olduğu için bizim kategorik verileri sayısal olarak ifade etmemiz gerekmektedir.Bu bölümde verimzi dummy değişken dönüşümü ile oluşturacağımız modeller için anlamlı hale getireceğiz.
+
+İki tür kategorik veri bulunmaktadır. Bunlar ordinal ve nominal’dir.Nominal değişken içinde yer alan değerlerin birbirinden üstün olma gibi bir durumu söz konusu değildir. Dolayısı ile aralarında bir sıralama olamaz. Ordinal veri tipinde ise bir üstünlükten bahsedilebilir. Bu tarz değişkenlerde sıralanabilirlik söz konusudur. 
+
+Oluşturulacak modellerin çalışabilmesi için kategorik verilerin sayısal anlamda dönüştürülmesi gerekmektedir.
+
+
+## One-Hot Encoding
+
+```{r}
+data_dummy <- data %>% select(-psychodiag)
+
+dmy <- dummyVars(" ~ .", data = data_dummy, fullRank = T)
+dat_transformed <- data.frame(predict(dmy, newdata = data_dummy))
+
+dat <- data %>% select(psychodiag)
+
+veri <- data.frame(dat,dat_transformed)
+
+```
+
+
+Makine öğrenmesi modeli kurulurken 3 farklı grup için 3 dummy (kukla) değişken oluşturulur ancak bu kolonlardan bir tanesi silinir (K - 1). Bu işlemin yapılmasındaki amaç Multicollinearity yani çoklu bağlanım sorununu ortadan kaldırmaktır.Bu işlemi **fullRank=T** ile gerçekleştiriyoruz.
+
+```{r}
+veri # data with dumny variables
+```
+
+
+# Decision Trees
+
+## Veri Seti Train-Test Ayrımı
+
+Veri Setimizi %80 Train Seti, %20 Test Seti olarak ayırıyoruz.
+
+```{r message=FALSE, warning=FALSE}
+# Veri Seti Train - Test Ayrımı
+set.seed(3456)
+train_indeks <- createDataPartition(veri$psychodiag,
+                                    p = .8,list = FALSE, times = 1)
+train <- veri[train_indeks,]
+test  <- veri[-train_indeks,]
+
+train_x <- train %>% dplyr::select(-psychodiag)
+train_y <- train$psychodiag
+
+test_x <- test %>% dplyr::select(-psychodiag)
+test_y <- test$psychodiag
+
+
+training <- data.frame(train_x, class = train_y) # Tek bir veri seti
+```
+
+
+
+### Dengesiz Dağılmış Veri ile Mücadele
+
+Dengesizlik bir sınıfın diğerinden çok daha fazla gözlem içermesi durumudur.Bu durumu ineleyelim.
+
+```{r echo=FALSE}
+ggplot(training,aes(x = class,fill = class)) +
+  geom_bar() +
+  labs(title = "Üniversite Öğrencilerine Yönelik Algılanan Stres Ölçeği",x = "Psikolojik Rahatsızlık Tanısı")
+```
+
+Dengesizlik problemi vardır.Bu durumdan kaçınmak için iki yöntem kullanılabilir; Upsampling ve Downsampling yöntemleri:
+
+* Upsampling Yöntemi: Sayıca az olan gruptaki veriler sayıca fazla olan gruptaki veri sayısı kadar artırılarak veri grupları arasındaki dengesizlik ortadan kaldırılır.
+
+* Downsampling Yöntemi: Sayıca fazla olan gruptaki veriler sayıca az olan gruptaki veri sayısına indirgeyerek veri grupları arasındaki dengesizlik ortadan kaldırılır.
+
+
+### Upsampling Yöntemi
+
+```{r}
+set.seed(3456)
+ups_training <- upsample(training, cat_col = "class")
+
+ggplot(ups_training,aes(x = class,fill = class)) +
+  geom_bar() +
+  labs(title = "Üniversite Öğrencilerine Yönelik Algılanan Stres Ölçeği",x = "Psikolojik Rahatsızlık Tanısı")
+```
+Dengesizlik problemi ortadan kaldırılmıştır.
+
+
+## Klasik Ağaç
+
+### Model
+
+Modelimizi train seti üzerine kurup oluşturulan karar ağacı modelinin test verisi üzerindeki performansını inceleyelim
+
+```{r}
+set.seed(123)
+tree_psycho<- tree(class ~ .,data = ups_training,method = "class")
+```
+
+
+```{r}
+summary(tree_psycho)
+```
+
+
+### Karar Ağacının Görselleştirilmesi
+
+```{r echo=FALSE, fig.height=6, fig.width=9}
+plot(tree_psycho,col = "brown",lwd = 4) ; text(tree_psycho,pretty = 0)
+```
+### Tahmin
+
+Sınıflandırma ağacında, yanıt değişkeni bulunduğu bölgede en çok görülen sınıf(**_majority vote_**) olarak tahmin edilir.
+
+Klasik Ağaç modelinin test verisi üzerindeki performansını inceleyelim.
+
+```{r include=FALSE}
+tree_pred <- predict(tree_psycho, test, type ="class") # Tahminler Elde Edildi
+```
+
+```{r include=FALSE}
+cm_tree <- caret::confusionMatrix(table(tree_pred,test_y)) # Confusion Matrix Oluşturuldu
+```
+
+
+```{r}
+draw_confusion_matrix <- function(cm) {
+
+  layout(matrix(c(1,1,2)))
+  par(mar=c(2,2,2,2))
+  plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title('CONFUSION MATRIX', cex.main=2)
+
+  # create the matrix 
+  rect(150, 430, 240, 370,   col = '#3F97D0')
+  text(200, 440, 'Evet',   cex = 1.2,font = 2)
+  rect(250, 430, 340, 370,   col='#F7AD50')
+  text(300, 440, 'Hayır', cex=1.2, font =2)
+  text(125, 370, 'PREDİCTED',cex=1.3, srt=90, font=2)
+  text(245, 450, 'ACTUAL',   cex=1.3, font=2)
+  rect(150, 305, 240, 365,   col='#F7AD50')
+  rect(250, 305, 340, 365,   col='#3F97D0')
+  text(140, 400, 'Evet',   cex=1.2, srt=90,font = 2)
+  text(140, 335, 'Hayır', cex=1.2, srt=90,font = 2)
+  text(160, 420, 'TP',       cex = 1.2,font = 2)
+  text(260, 420, 'FP',       cex = 1.2,font = 2)
+  text(160, 355, 'FN',       cex = 1.2,font = 2)
+  text(260, 355, 'TN',       cex = 1.2,font = 2)
+
+  # add in the cm results 
+  res <- as.numeric(cm$table)
+  text(195, 400, res[1], cex=1.6, font=2, col='white')
+  text(195, 335, res[2], cex=1.6, font=2, col='white')
+  text(295, 400, res[3], cex=1.6, font=2, col='white')
+  text(295, 335, res[4], cex=1.6, font=2, col='white')
+
+  # add in the specifics 
+  plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title("DETAILS",cex.main = 2)
+  text(10, 85, names(cm$byClass[1]), cex=1.2, font=2)
+  text(10, 70, round(as.numeric(cm$byClass[1]), 2), cex=1.2)
+  text(30, 85, names(cm$byClass[2]), cex=1.2, font=2)
+  text(30, 70, round(as.numeric(cm$byClass[2]), 2), cex=1.2)
+  text(50, 85, names(cm$byClass[5]), cex=1.2, font=2)
+  text(50, 70, round(as.numeric(cm$byClass[5]), 2), cex=1.2)
+  text(70, 85, names(cm$byClass[6]), cex=1.2, font=2)
+  text(70, 70, round(as.numeric(cm$byClass[6]), 2), cex=1.2)
+  text(90, 85, names(cm$byClass[7]), cex=1.2, font=2)
+  text(90, 70, round(as.numeric(cm$byClass[7]), 2), cex=1.2)
+
+  # add in the accuracy information 
+  text(30, 35, names(cm$overall[1]), cex=1.5, font=2)
+  text(30, 20, round(as.numeric(cm$overall[1]), 2), cex=1.4)
+  text(70, 35, names(cm$overall[2]), cex=1.5, font=2)
+  text(70, 20, round(as.numeric(cm$overall[2]), 2), cex=1.4)
+}  
+```
+
+```{r}
+draw_confusion_matrix(cm_tree)
+```
+
+
+## Bagging
+
+### Model
+
+**Model (500 Boostrap Sample)**
+500 Boostrap örneklem ile bagging modelimizi oluşturalım.Bagging için değişken sayımızı $mtry = p = 12$ olarak alıyoruz. "importance = T" alarak açıklayıcı değişkenlerin önemine ilişkin ölçüleri elde edebiliriz.
+
+
+```{r}
+set.seed(123)
+
+bag_psycho <- randomForest(class ~ ., data = ups_training,
+                           mtry = 12,
+                           importance = TRUE) 
+
+bag_psycho
+```
+
+
+```{r include=FALSE}
+bag_pred <- predict(bag_psycho, test, type ="class")
+```
+
+
+```{r include=FALSE}
+cm_bag <- caret::confusionMatrix(table(bag_pred,test_y))
+```
+
+
+```{r}
+draw_confusion_matrix <- function(cm) {
+
+  layout(matrix(c(1,1,2)))
+  par(mar=c(2,2,2,2))
+  plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title('CONFUSION MATRIX', cex.main=2)
+
+  # create the matrix 
+  rect(150, 430, 240, 370,   col = '#3F97D0')
+  text(200, 440, 'Evet',   cex = 1.2,font = 2)
+  rect(250, 430, 340, 370,   col='#F7AD50')
+  text(300, 440, 'Hayır', cex=1.2, font =2)
+  text(125, 370, 'PREDİCTED',cex=1.3, srt=90, font=2)
+  text(245, 450, 'ACTUAL',   cex=1.3, font=2)
+  rect(150, 305, 240, 365,   col='#F7AD50')
+  rect(250, 305, 340, 365,   col='#3F97D0')
+  text(140, 400, 'Evet',   cex=1.2, srt=90,font = 2)
+  text(140, 335, 'Hayır', cex=1.2, srt=90,font = 2)
+  text(160, 420, 'TP',       cex = 1.2,font = 2)
+  text(260, 420, 'FP',       cex = 1.2,font = 2)
+  text(160, 355, 'FN',       cex = 1.2,font = 2)
+  text(260, 355, 'TN',       cex = 1.2,font = 2)
+
+  # add in the cm results 
+  res <- as.numeric(cm$table)
+  text(195, 400, res[1], cex=1.6, font=2, col='white')
+  text(195, 335, res[2], cex=1.6, font=2, col='white')
+  text(295, 400, res[3], cex=1.6, font=2, col='white')
+  text(295, 335, res[4], cex=1.6, font=2, col='white')
+
+  # add in the specifics 
+  plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title("DETAILS",cex.main = 2)
+  text(10, 85, names(cm$byClass[1]), cex=1.2, font=2)
+  text(10, 70, round(as.numeric(cm$byClass[1]), 2), cex=1.2)
+  text(30, 85, names(cm$byClass[2]), cex=1.2, font=2)
+  text(30, 70, round(as.numeric(cm$byClass[2]), 2), cex=1.2)
+  text(50, 85, names(cm$byClass[5]), cex=1.2, font=2)
+  text(50, 70, round(as.numeric(cm$byClass[5]), 2), cex=1.2)
+  text(70, 85, names(cm$byClass[6]), cex=1.2, font=2)
+  text(70, 70, round(as.numeric(cm$byClass[6]), 2), cex=1.2)
+  text(90, 85, names(cm$byClass[7]), cex=1.2, font=2)
+  text(90, 70, round(as.numeric(cm$byClass[7]), 2), cex=1.2)
+
+  # add in the accuracy information 
+  text(30, 35, names(cm$overall[1]), cex=1.5, font=2)
+  text(30, 20, round(as.numeric(cm$overall[1]), 2), cex=1.4)
+  text(70, 35, names(cm$overall[2]), cex=1.5, font=2)
+  text(70, 20, round(as.numeric(cm$overall[2]), 2), cex=1.4)
+}    
+```
+
+```{r}
+draw_confusion_matrix(cm_bag)
+```
+
+
+## Random Forest
+
+### Model
+
+**Model(500 Boostrap Sample)**
+
+500 Boostrap örneklem ile Random Forest modelimizi oluşturalım.Random Forest için değişken sayımızı $mtry =\sqrt{p} = \sqrt{12}\approx 3$ ya da 4 olarak alabiliriz. "importance = T" alarak açıklayıcı değişkenlerin önemine ilişkin ölçüleri elde edebiliriz.
+
+
+```{r}
+set.seed(100)
+
+rf_psycho <- randomForest(class ~ ., data = ups_training,
+                          mtry = 4,
+                          Importance = TRUE)
+
+rf_psycho
+```
+OOB estimate of  error rate: **%9.7** olarak elde edildi
+
+Psikolojik rahatsızlık tanısı değişkeninin "Evet" sınıfına ait sınıflandırma hatası **%2.98** ve "Hayır" sınıfına ait sınıflandırma hatası **%16.41** olarak elde edildi.
+
+
+### Tahmin
+*Tahmin (500 Boostrap Sample)**
+
+500 Boostrap Sample ile oluşturduğumuz Random Forest modelinin test verisi üzerindeki performansını inceleyelim;
+
+
+```{r include=FALSE}
+rf_pred <- predict(rf_psycho, test, type ="class")
+```
+
+```{r include=FALSE}
+cm_rf <- caret::confusionMatrix(table(rf_pred,test_y))
+```
+
+
+```{r}
+draw_confusion_matrix <- function(cm) {
+
+  layout(matrix(c(1,1,2)))
+  par(mar=c(2,2,2,2))
+  plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title('CONFUSION MATRIX', cex.main=2)
+
+  # create the matrix 
+  rect(150, 430, 240, 370,   col = '#3F97D0')
+  text(200, 440, 'Evet',   cex = 1.2,font = 2)
+  rect(250, 430, 340, 370,   col='#F7AD50')
+  text(300, 440, 'Hayır', cex=1.2, font =2)
+  text(125, 370, 'PREDİCTED',cex=1.3, srt=90, font=2)
+  text(245, 450, 'ACTUAL',   cex=1.3, font=2)
+  rect(150, 305, 240, 365,   col='#F7AD50')
+  rect(250, 305, 340, 365,   col='#3F97D0')
+  text(140, 400, 'Evet',   cex=1.2, srt=90,font = 2)
+  text(140, 335, 'Hayır', cex=1.2, srt=90,font = 2)
+  text(160, 420, 'TP',       cex = 1.2,font = 2)
+  text(260, 420, 'FP',       cex = 1.2,font = 2)
+  text(160, 355, 'FN',       cex = 1.2,font = 2)
+  text(260, 355, 'TN',       cex = 1.2,font = 2)
+
+  # add in the cm results 
+  res <- as.numeric(cm$table)
+  text(195, 400, res[1], cex=1.6, font=2, col='white')
+  text(195, 335, res[2], cex=1.6, font=2, col='white')
+  text(295, 400, res[3], cex=1.6, font=2, col='white')
+  text(295, 335, res[4], cex=1.6, font=2, col='white')
+
+  # add in the specifics 
+  plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title("DETAILS",cex.main = 2)
+  text(10, 85, names(cm$byClass[1]), cex=1.2, font=2)
+  text(10, 70, round(as.numeric(cm$byClass[1]), 3), cex=1.2)
+  text(30, 85, names(cm$byClass[2]), cex=1.2, font=2)
+  text(30, 70, round(as.numeric(cm$byClass[2]), 3), cex=1.2)
+  text(50, 85, names(cm$byClass[5]), cex=1.2, font=2)
+  text(50, 70, round(as.numeric(cm$byClass[5]), 3), cex=1.2)
+  text(70, 85, names(cm$byClass[6]), cex=1.2, font=2)
+  text(70, 70, round(as.numeric(cm$byClass[6]), 3), cex=1.2)
+  text(90, 85, names(cm$byClass[7]), cex=1.2, font=2)
+  text(90, 70, round(as.numeric(cm$byClass[7]), 3), cex=1.2)
+
+  # add in the accuracy information 
+  text(30, 35, names(cm$overall[1]), cex=1.5, font=2)
+  text(30, 20, round(as.numeric(cm$overall[1]), 3), cex=1.4)
+  text(70, 35, names(cm$overall[2]), cex=1.5, font=2)
+  text(70, 20, round(as.numeric(cm$overall[2]), 3), cex=1.4)
+}  
+```
+
+```{r}
+draw_confusion_matrix(cm_rf)
+```
+
+## Boosting
+
+Boosting modeli için sınıfları 0,1 olarak kodlayalım.
+
+```{r}
+ups_training$class <- ifelse(ups_training$class == "Evet","0","1")
+```
+
+### Model
+
+
+
+```{r}
+set.seed(123)
+
+boost_psycho <- gbm(class ~ ., data = ups_training,
+                    shrinkage = 0.01,
+                    distribution = "bernoulli",
+                    interaction.depth = 12,
+                    n.trees = 2000)
+
+boost_psycho 
+```
+
+Model çıktısını incelediğimizde Bernoulli loss function kullanılarak bir gbm modeli oluşturulduğu ve 2000 iterasyon yapıldığı, 23'ü sıfır olmayan etkiye sahip 34 açıklayıcı değişkenin var olduğu mesajını alıyoruz.
+
+
+
+### Tahmin
+
+Oluşturduğumuz Boosting modelinin test verisi üzerindeki performansını inceleyelim;
+
+
+```{r include=FALSE}
+boost_pred  <- predict(boost_psycho, test, type = "response")
+boost_class <- ifelse(boost_pred > 0.5, "Hayır","Evet")
+
+
+cm_boost <- caret::confusionMatrix(table(factor(boost_class),test_y))
+
+```
+
+
+```{r}
+draw_confusion_matrix <- function(cm) {
+
+  layout(matrix(c(1,1,2)))
+  par(mar=c(2,2,2,2))
+  plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title('CONFUSION MATRIX', cex.main=2)
+
+  # create the matrix 
+  rect(150, 430, 240, 370,   col = '#3F97D0')
+  text(200, 440, 'Evet',   cex = 1.2,font = 2)
+  rect(250, 430, 340, 370,   col='#F7AD50')
+  text(300, 440, 'Hayır', cex=1.2, font =2)
+  text(125, 370, 'PREDİCTED',cex=1.3, srt=90, font=2)
+  text(245, 450, 'ACTUAL',   cex=1.3, font=2)
+  rect(150, 305, 240, 365,   col='#F7AD50')
+  rect(250, 305, 340, 365,   col='#3F97D0')
+  text(140, 400, 'Evet',   cex=1.2, srt=90,font = 2)
+  text(140, 335, 'Hayır', cex=1.2, srt=90,font = 2)
+  text(160, 420, 'TP',       cex = 1.2,font = 2)
+  text(260, 420, 'FP',       cex = 1.2,font = 2)
+  text(160, 355, 'FN',       cex = 1.2,font = 2)
+  text(260, 355, 'TN',       cex = 1.2,font = 2)
+
+  # add in the cm results 
+  res <- as.numeric(cm$table)
+  text(195, 400, res[1], cex=1.6, font=2, col='white')
+  text(195, 335, res[2], cex=1.6, font=2, col='white')
+  text(295, 400, res[3], cex=1.6, font=2, col='white')
+  text(295, 335, res[4], cex=1.6, font=2, col='white')
+
+  # add in the specifics 
+  plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title("DETAILS",cex.main = 2)
+  text(10, 85, names(cm$byClass[1]), cex=1.2, font=2)
+  text(10, 70, round(as.numeric(cm$byClass[1]), 2), cex=1.2)
+  text(30, 85, names(cm$byClass[2]), cex=1.2, font=2)
+  text(30, 70, round(as.numeric(cm$byClass[2]), 2), cex=1.2)
+  text(50, 85, names(cm$byClass[5]), cex=1.2, font=2)
+  text(50, 70, round(as.numeric(cm$byClass[5]), 2), cex=1.2)
+  text(70, 85, names(cm$byClass[6]), cex=1.2, font=2)
+  text(70, 70, round(as.numeric(cm$byClass[6]), 2), cex=1.2)
+  text(90, 85, names(cm$byClass[7]), cex=1.2, font=2)
+  text(90, 70, round(as.numeric(cm$byClass[7]), 2), cex=1.2)
+
+  # add in the accuracy information 
+  text(30, 35, names(cm$overall[1]), cex=1.5, font=2)
+  text(30, 20, round(as.numeric(cm$overall[1]), 2), cex=1.4)
+  text(70, 35, names(cm$overall[2]), cex=1.5, font=2)
+  text(70, 20, round(as.numeric(cm$overall[2]), 2), cex=1.4)
+}  
+```
+
+```{r}
+draw_confusion_matrix(cm_boost)
+```
+
+
